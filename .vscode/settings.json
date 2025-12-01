@@ -1,13 +1,23 @@
 {
   "C_Cpp.intelliSenseEngine": "default",
-  "idf.adapterTargetName": "esp32s3",
+  "idf.espIdfPath": "/home/kvhnuke/esp/v5.5.1/esp-idf",
+  "idf.toolsPath": "/home/kvhnuke/.espressif",
+  "idf.pythonInstallPath": "/usr/bin/python3",
+  "idf.openOcdConfigs": ["board/esp32p4-ftdi.cfg"],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32p4"
+  },
+  "clangd.path": "/home/kvhnuke/.espressif/tools/esp-clang/esp-19.1.2_20250312/esp-clang/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=/home/kvhnuke/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/bin/riscv32-esp-elf-gcc",
+    "--compile-commands-dir=/home/kvhnuke/Github/esp/usb_host_lib/build"
+  ],
+  "idf.port": "/dev/ttyACM0",
+  "idf.flashType": "UART",
   "files.associations": {
-    "array": "c",
-    "string": "c",
+    "bitset": "c",
     "string_view": "c",
-    "chrono": "c",
-    "lib-sdr.h": "c",
-    "rtl-sdr.h": "c",
-    "esp_libusb.h": "c"
+    "regex": "c"
   }
 }

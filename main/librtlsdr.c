@@ -112,6 +112,7 @@ struct rtlsdr_dev
     int dev_lost;
     int driver_active;
     unsigned int xfer_errors;
+    int i2c_repeater_on;
 };
 
 void rtlsdr_set_gpio_bit(rtlsdr_dev_t *dev, uint8_t gpio, int val);
@@ -565,6 +566,10 @@ void rtlsdr_set_gpio_output(rtlsdr_dev_t *dev, uint8_t gpio)
 
 void rtlsdr_set_i2c_repeater(rtlsdr_dev_t *dev, int on)
 {
+    if (on == dev->i2c_repeater_on)
+        return;
+    on = !!on; /* values +2 to force on */
+    dev->i2c_repeater_on = on;
     rtlsdr_demod_write_reg(dev, 1, 0x01, on ? 0x18 : 0x10, 1);
 }
 
@@ -900,6 +905,7 @@ uint32_t rtlsdr_get_center_freq(rtlsdr_dev_t *dev)
 int rtlsdr_set_freq_correction(rtlsdr_dev_t *dev, int ppm)
 {
     int r = 0;
+    rtlsdr_set_i2c_repeater(dev, 0);
 
     if (!dev)
         return -1;
@@ -1339,8 +1345,6 @@ int rtlsdr_open(rtlsdr_dev_t **out_dev, uint8_t index, usb_host_client_handle_t 
     driver_obj->client_hdl = client_hdl;
     ESP_ERROR_CHECK(usb_host_device_open(driver_obj->client_hdl, index, &driver_obj->dev_hdl));
     dev->driver_obj = driver_obj;
-    ESP_ERROR_CHECK(usb_host_interface_claim(dev->driver_obj->client_hdl, dev->driver_obj->dev_hdl, 0, 0));
-    dev->rtl_xtal = DEF_RTL_XTAL_FREQ;
     init_adsb_dev();
     /* perform a dummy write, if it fails, reset the device */
     if (rtlsdr_write_reg(dev, USBB, USB_SYSCTL, 0x09, 1) < 0)
@@ -1348,6 +1352,8 @@ int rtlsdr_open(rtlsdr_dev_t **out_dev, uint8_t index, usb_host_client_handle_t 
         fprintf(stderr, "Resetting device...\n");
         // libusb_reset_device(dev->devh);
     }
+    ESP_ERROR_CHECK(usb_host_interface_claim(dev->driver_obj->client_hdl, dev->driver_obj->dev_hdl, 0, 0));
+    dev->rtl_xtal = DEF_RTL_XTAL_FREQ;
 
     rtlsdr_init_baseband(dev);
     dev->dev_lost = 0;

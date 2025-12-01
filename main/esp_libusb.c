@@ -11,15 +11,12 @@ void init_adsb_dev()
 }
 void bulk_transfer_read_cb(usb_transfer_t *transfer)
 {
-    for (int i = 0; i < transfer->actual_num_bytes; i++)
-    {
-        adsbdev->response_buf[i] = transfer->data_buffer[i];
-    }
+    memcpy(adsbdev->response_buf, transfer->data_buffer, transfer->actual_num_bytes);
     adsbdev->is_done = true;
     adsbdev->is_success = transfer->status == 0;
     adsbdev->bytes_transferred = transfer->num_bytes;
-    printf("BULK: Transfer:Read type %d\n", transfer->num_bytes);
-    printf("BULK: Transfer:Read status %d, actual number of bytes transferred %d, databuffer size %d, %d\n", transfer->status, transfer->actual_num_bytes, transfer->data_buffer_size, adsbdev->response_buf[8]);
+    // printf("BULK: Transfer:Read type %d\n", transfer->num_bytes);
+    // printf("BULK: Transfer:Read status %d, actual number of bytes transferred %d, databuffer size %d, %d\n", transfer->status, transfer->actual_num_bytes, transfer->data_buffer_size, adsbdev->response_buf[8]);
 }
 
 void transfer_read_cb(usb_transfer_t *transfer)
@@ -37,12 +34,18 @@ void transfer_read_cb(usb_transfer_t *transfer)
 
 int esp_libusb_bulk_transfer(class_driver_t *driver_obj, unsigned char endpoint, unsigned char *data, int length, int *transferred, unsigned int timeout)
 {
-    ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer info %d %d %d %d", endpoint, length, timeout, *transferred);
+    // ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer info %d %d %d %d", endpoint, length, timeout, *transferred);
     assert(driver_obj->dev_hdl != NULL);
     size_t sizePacket = usb_round_up_to_mps(length, 64);
     usb_transfer_t *transfer = NULL;
-    usb_host_transfer_alloc(sizePacket, 0, &transfer);
-    ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer usb_host_transfer_alloc %d", sizePacket);
+    esp_err_t r = usb_host_transfer_alloc(sizePacket, 0, &transfer);
+    if (r != ESP_OK)
+    {
+        ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer failed with %d", r);
+        return -1;
+    }
+
+    // ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer usb_host_transfer_alloc %d %d", sizePacket, length);
     transfer->num_bytes = sizePacket;
     transfer->device_handle = driver_obj->dev_hdl;
     transfer->bEndpointAddress = endpoint;
@@ -50,9 +53,10 @@ int esp_libusb_bulk_transfer(class_driver_t *driver_obj, unsigned char endpoint,
     transfer->context = (void *)&driver_obj;
     transfer->timeout_ms = timeout;
     adsbdev->is_done = false;
+    free(adsbdev->response_buf);
     adsbdev->response_buf = calloc(sizePacket, sizeof(uint8_t));
 
-    esp_err_t r = usb_host_transfer_submit(transfer);
+    r = usb_host_transfer_submit(transfer);
     if (r != ESP_OK)
     {
         ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer failed with %d", r);
@@ -67,11 +71,7 @@ int esp_libusb_bulk_transfer(class_driver_t *driver_obj, unsigned char endpoint,
         ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer failed");
         return -1;
     }
-    ESP_ERROR_CHECK(usb_host_endpoint_clear(driver_obj->dev_hdl, endpoint));
-    for (int i = 0; i < length; i++)
-    {
-        data[i] = adsbdev->response_buf[i];
-    }
+    memcpy(data, adsbdev->response_buf, length);
     *transferred = adsbdev->bytes_transferred;
     usb_host_transfer_free(transfer);
     return 0;

@@ -30,8 +30,8 @@
 #include "tuner_r82xx.h"
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
-#define MHZ(x) ((x)*1000 * 1000)
-#define KHZ(x) ((x)*1000)
+#define MHZ(x) ((x) * 1000 * 1000)
+#define KHZ(x) ((x) * 1000)
 
 /*
  * Static constants
@@ -47,7 +47,6 @@ static const uint8_t r82xx_init_array[NUM_REGS] = {
     0x48, 0xcc, 0x60, 0x00, /* 18 to 1b */
     0x54, 0xae, 0x4a, 0xc0  /* 1c to 1f */
 };
-
 /* Tuner frequency ranges */
 static const struct r82xx_freq_range freq_ranges[] = {
     {
@@ -588,6 +587,7 @@ static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 
     if (!(data[2] & 0x40))
     {
+        fprintf(stderr, "[R82XX] Freq: %lu\n", freq);
         fprintf(stderr, "[R82XX] PLL not locked!\n");
         priv->has_lock = 0;
         return 0;
@@ -1310,18 +1310,22 @@ int r82xx_init(struct r82xx_priv *priv)
     priv->xtal_cap_sel = XTAL_HIGH_CAP_0P;
 
     /* Initialize registers */
+    priv->reg_cache = 0;
     rc = r82xx_write(priv, 0x05,
                      r82xx_init_array, sizeof(r82xx_init_array));
 
-    rc = r82xx_set_tv_standard(priv, 3, TUNER_DIGITAL_TV, 0);
-    if (rc < 0)
-        goto err;
+    rc |= r82xx_set_tv_standard(priv, 3, TUNER_DIGITAL_TV, 0);
 
-    rc = r82xx_sysfreq_sel(priv, 0, TUNER_DIGITAL_TV, SYS_DVBT);
+    priv->bw = R82XX_DEFAULT_IF_BW;
+    priv->int_freq = R82XX_DEFAULT_IF_FREQ;
+    /* r82xx_set_bw will always be called by rtlsdr_set_sample_rate,
+       so there's no need to call r82xx_set_if_filter here */
+
+    rc |= r82xx_sysfreq_sel(priv, 0, TUNER_DIGITAL_TV, SYS_DVBT);
 
     priv->init_done = 1;
+    priv->reg_cache = 1;
 
-err:
     if (rc < 0)
         fprintf(stderr, "%s: failed=%d\n", __FUNCTION__, rc);
     return rc;
