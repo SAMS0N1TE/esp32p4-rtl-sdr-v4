@@ -10,10 +10,18 @@
 #include "esp_log.h"
 #include "usb/usb_host.h"
 #include "rtl-sdr.h"
+#include "mode-s.h"
 
 #define CLIENT_NUM_EVENT_MSG 5
 
-#define DEFAULT_BUF_LENGTH (16 * 16384)
+#define MAX_PACKET_SIZE 128000
+#define DEFAULT_BUF_LENGTH (MAX_PACKET_SIZE * 1)
+#define preamble_len 16
+#define long_frame 112
+#define short_frame 56
+#define MESSAGEGO 253
+#define OVERWRITE 254
+#define BADSAMPLE 255
 
 typedef enum
 {
@@ -62,6 +70,281 @@ typedef struct
 static const char *TAG = "CLASS";
 static rtlsdr_dev_t *rtldev = NULL;
 static class_driver_t *s_driver_obj;
+// static mode_s_t state;
+// static uint16_t mag[DEFAULT_BUF_LENGTH / 2];
+uint16_t squares[256];
+
+int short_output = 0;
+int quality = 10;
+int allowed_errors = 5;
+int adsb_frame[14];
+
+void display(int *frame, int len)
+{
+    int i, df;
+    // if (!short_output && len <= short_frame)
+    // {
+    //     return;
+    // }
+    df = (frame[0] >> 3) & 0x1f;
+    // if (quality == 0 && !(df == 11 || df == 17 || df == 18 || df == 19))
+    // {
+    //     return;
+    // }
+    fprintf(stdout, "*");
+    for (i = 0; i < ((len + 7) / 8); i++)
+    {
+        fprintf(stdout, "%02x", frame[i]);
+    }
+    fprintf(stdout, ";\r\n");
+    fprintf(stdout, "DF=%i CA=%i\n", df, frame[0] & 0x07);
+    fprintf(stdout, "ICAO Address=%06x\n", frame[1] << 16 | frame[2] << 8 | frame[3]);
+    if (len <= short_frame)
+    {
+        return;
+    }
+    fprintf(stdout, "PI=0x%06x\n", frame[11] << 16 | frame[12] << 8 | frame[13]);
+    fprintf(stdout, "Type Code=%i S.Type/Ant.=%x\n", (frame[4] >> 3) & 0x1f, frame[4] & 0x07);
+    fprintf(stdout, "--------------\n");
+}
+
+int magnitute(uint8_t *buf, int len)
+/* takes i/q, changes buf in place (16 bit), returns new len (16 bit) */
+{
+    int i;
+    uint16_t *m;
+    for (i = 0; i < len; i += 2)
+    {
+        m = (uint16_t *)(&buf[i]);
+        *m = squares[buf[i]] + squares[buf[i + 1]];
+    }
+    return len / 2;
+}
+uint16_t single_manchester(uint16_t a, uint16_t b, uint16_t c, uint16_t d)
+/* takes 4 consecutive real samples, return 0 or 1, BADSAMPLE on error */
+{
+    int bit, bit_p;
+    bit_p = a > b;
+    bit = c > d;
+
+    if (quality == 0)
+    {
+        return bit;
+    }
+
+    if (quality == 5)
+    {
+        if (bit && bit_p && b > c)
+        {
+            return BADSAMPLE;
+        }
+        if (!bit && !bit_p && b < c)
+        {
+            return BADSAMPLE;
+        }
+        return bit;
+    }
+
+    if (quality == 10)
+    {
+        if (bit && bit_p && c > b)
+        {
+            return 1;
+        }
+        if (bit && !bit_p && d < b)
+        {
+            return 1;
+        }
+        if (!bit && bit_p && d > b)
+        {
+            return 0;
+        }
+        if (!bit && !bit_p && c < b)
+        {
+            return 0;
+        }
+        return BADSAMPLE;
+    }
+
+    if (bit && bit_p && c > b && d < a)
+    {
+        return 1;
+    }
+    if (bit && !bit_p && c > a && d < b)
+    {
+        return 1;
+    }
+    if (!bit && bit_p && c < a && d > b)
+    {
+        return 0;
+    }
+    if (!bit && !bit_p && c < b && d > a)
+    {
+        return 0;
+    }
+    return BADSAMPLE;
+}
+
+inline uint16_t min16(uint16_t a, uint16_t b)
+{
+    return a < b ? a : b;
+}
+
+inline uint16_t max16(uint16_t a, uint16_t b)
+{
+    return a > b ? a : b;
+}
+
+int preamble(uint16_t *buf, int i)
+/* returns 0/1 for preamble at index i */
+{
+    int i2;
+    uint16_t low = 0;
+    uint16_t high = 65535;
+    for (i2 = 0; i2 < preamble_len; i2++)
+    {
+        switch (i2)
+        {
+        case 0:
+        case 2:
+        case 7:
+        case 9:
+            // high = min16(high, buf[i+i2]);
+            high = buf[i + i2];
+            break;
+        default:
+            // low  = max16(low,  buf[i+i2]);
+            low = buf[i + i2];
+            break;
+        }
+        if (high <= low)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void manchester(uint16_t *buf, int len)
+/* overwrites magnitude buffer with valid bits (BADSAMPLE on errors) */
+{
+    /* a and b hold old values to verify local manchester */
+    uint16_t a = 0, b = 0;
+    uint16_t bit;
+    int i, i2, start, errors;
+    int maximum_i = len - 1; // len-1 since we look at i and i+1
+    // todo, allow wrap across buffers
+    i = 0;
+    while (i < maximum_i)
+    {
+        /* find preamble */
+        for (; i < (len - preamble_len); i++)
+        {
+            if (!preamble(buf, i))
+            {
+                continue;
+            }
+            a = buf[i];
+            b = buf[i + 1];
+            for (i2 = 0; i2 < preamble_len; i2++)
+            {
+                buf[i + i2] = MESSAGEGO;
+            }
+            i += preamble_len;
+            break;
+        }
+        i2 = start = i;
+        errors = 0;
+        /* mark bits until encoding breaks */
+        for (; i < maximum_i; i += 2, i2++)
+        {
+            bit = single_manchester(a, b, buf[i], buf[i + 1]);
+            a = buf[i];
+            b = buf[i + 1];
+            if (bit == BADSAMPLE)
+            {
+                errors += 1;
+                if (errors > allowed_errors)
+                {
+                    buf[i2] = BADSAMPLE;
+                    break;
+                }
+                else
+                {
+                    bit = a > b;
+                    /* these don't have to match the bit */
+                    a = 0;
+                    b = 65535;
+                }
+            }
+            buf[i] = buf[i + 1] = OVERWRITE;
+            buf[i2] = bit;
+        }
+    }
+}
+
+void messages(uint16_t *buf, int len)
+{
+    int i, data_i, index, shift, frame_len;
+    // todo, allow wrap across buffers
+    for (i = 0; i < len; i++)
+    {
+        if (buf[i] > 1)
+        {
+            continue;
+        }
+        frame_len = long_frame;
+        data_i = 0;
+        for (index = 0; index < 14; index++)
+        {
+            adsb_frame[index] = 0;
+        }
+        for (; i < len && buf[i] <= 1 && data_i < frame_len; i++, data_i++)
+        {
+            if (buf[i])
+            {
+                index = data_i / 8;
+                shift = 7 - (data_i % 8);
+                adsb_frame[index] |= (uint8_t)(1 << shift);
+            }
+            if (data_i == 7)
+            {
+                if (adsb_frame[0] == 0)
+                {
+                    break;
+                }
+                if (adsb_frame[0] & 0x80)
+                {
+                    frame_len = long_frame;
+                }
+                else
+                {
+                    frame_len = short_frame;
+                }
+            }
+        }
+        if (data_i < (frame_len - 1))
+        {
+            continue;
+        }
+        display(adsb_frame, frame_len);
+        fflush(stdout);
+    }
+}
+
+void on_msg(mode_s_t *self, struct mode_s_msg *mm)
+{
+    fprintf(stderr, "WARNING:here.\n");
+    int msgLength = mm->msgbits / 8;
+    for (int i = 0; i < msgLength; i++)
+        fprintf(stdout, "%02X", mm->msg[i]);
+}
+
+// void demodulate(uint8_t *source, int length)
+// {
+//     mode_s_compute_magnitude_vector(&source, &mag, length);
+//     mode_s_detect(&state, &mag, length / 2, on_msg);
+// }
 
 static void client_event_cb(const usb_host_client_event_msg_t *event_msg, void *arg)
 {
@@ -93,7 +376,7 @@ static void client_event_cb(const usb_host_client_event_msg_t *event_msg, void *
             fprintf(stderr, "Sampling at %u S/s.\n", 2000000);
         }
 
-        r = rtlsdr_set_tuner_gain_mode(rtldev, 0);
+        r = rtlsdr_set_tuner_gain_mode(rtldev, 0.5);
         if (r != 0)
         {
             fprintf(stderr, "WARNING: Failed to set tuner gain.\n");
@@ -102,15 +385,15 @@ static void client_event_cb(const usb_host_client_event_msg_t *event_msg, void *
         {
             fprintf(stderr, "Tuner gain set to automatic.\n");
         }
-        r = rtlsdr_set_freq_correction(rtldev, 0);
-        if (r < 0)
-        {
-            fprintf(stderr, "WARNING: Failed to set ppm error.\n");
-        }
-        else
-        {
-            fprintf(stderr, "Tuner error set to %i ppm.\n", 0);
-        }
+        // r = rtlsdr_set_freq_correction(rtldev, 0);
+        // if (r < 0)
+        // {
+        //     fprintf(stderr, "WARNING: Failed to set ppm error.\n");
+        // }
+        // else
+        // {
+        //     fprintf(stderr, "Tuner error set to %i ppm.\n", 0);
+        // }
         r = rtlsdr_reset_buffer(rtldev);
         if (r < 0)
         {
@@ -118,50 +401,44 @@ static void client_event_cb(const usb_host_client_event_msg_t *event_msg, void *
         }
         vTaskDelay(100); // Short delay to let client task spin up
 
-        uint32_t out_block_size = DEFAULT_BUF_LENGTH;
-        uint8_t *buffer = malloc(out_block_size * sizeof(uint8_t));
+        uint8_t *buffer = malloc(DEFAULT_BUF_LENGTH * sizeof(uint8_t));
         int n_read = 2;
         ESP_LOGI(TAG, "[APP] Free memory: %ld bytes", esp_get_free_heap_size());
-        // uint32_t bytes_to_read = 0;
+        // mode_s_init(&state);
         while (true)
         {
-            r = rtlsdr_read_sync(rtldev, buffer, out_block_size, &n_read);
-            // ESP_LOGI(TAG, "[APP] Free memory: %ld bytes", esp_get_free_heap_size());
-            if (r < 0)
+            for (int i = 0; i < DEFAULT_BUF_LENGTH; i += MAX_PACKET_SIZE)
             {
-                fprintf(stderr, "WARNING: sync read failed.\n");
-                break;
+                uint8_t *tbuffer = malloc(MAX_PACKET_SIZE * sizeof(uint8_t));
+                r = rtlsdr_read_sync(rtldev, tbuffer, MAX_PACKET_SIZE, &n_read);
+                if (r < 0)
+                {
+                    fprintf(stderr, "WARNING: sync read failed.\n");
+                    break;
+                }
+                if ((uint32_t)n_read < MAX_PACKET_SIZE)
+                {
+                    fprintf(stderr, "Short read, samples lost, exiting!\n");
+                    break;
+                }
+                for (int j = 0; j < MAX_PACKET_SIZE; j++)
+                {
+                    buffer[i + j] = tbuffer[j];
+                }
+                free(tbuffer);
             }
-            if (fwrite(buffer, 1, n_read, stdout) != n_read)
-            {
-                perror("fwrite");
-            }
-            // for (int i = 0; i < n_read; i++)
-            // {
+            // int sbyte = DEFAULT_BUF_LENGTH - 10;
+            // for (int i = sbyte; i < sbyte + 10; i++)
             //     fprintf(stdout, "%02X", buffer[i]);
-            // }
-
-            // if ((bytes_to_read > 0) && (bytes_to_read < (uint32_t)n_read))
-            // {
-            //     n_read = bytes_to_read;
-            //     do_exit = 1;
-            // }
-            // for (int i = 0; i < 20; i++)
+            // fprintf(stdout, "\n");
+            // sbyte = 512 - 10;
+            // for (int i = sbyte; i < sbyte + 10; i++)
             //     fprintf(stdout, "%02X", buffer[i]);
-            // if (fwrite(buffer, 1, n_read, stdout) != (size_t)n_read)
-            // {
-            //     fprintf(stderr, "Short write, samples lost, exiting!\n");
-            //     break;
-            // }
-
-            if ((uint32_t)n_read < out_block_size)
-            {
-                fprintf(stderr, "Short read, samples lost, exiting!\n");
-                break;
-            }
-
-            // if (bytes_to_read > 0)
-            //     bytes_to_read -= n_read;
+            // fprintf(stdout, "\n");
+            // demodulate(buffer, DEFAULT_BUF_LENGTH);
+            int len = magnitute(buffer, DEFAULT_BUF_LENGTH);
+            manchester((uint16_t *)buffer, len);
+            messages((uint16_t *)buffer, len);
         }
         // driver_obj->mux_protected.device[event_msg->new_dev.address].dev_hdl = NULL;
         // // Open the device next

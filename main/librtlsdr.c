@@ -408,21 +408,14 @@ enum blocks
 int rtlsdr_read_array(rtlsdr_dev_t *dev, uint8_t block, uint16_t addr, uint8_t *array, uint8_t len)
 {
     uint16_t index = (block << 8);
-    unsigned char *data = calloc(len, sizeof(char));
-    int ret = esp_libusb_control_transfer(dev->driver_obj, CTRL_IN, 0, addr, index, data, len, CTRL_TIMEOUT);
-    // ESP_LOGI(TAG_ADSB, "rtlsdr_read_array here %d %d", ret, data[0]);
-    *array = data[0];
+    int ret = esp_libusb_control_transfer(dev->driver_obj, CTRL_IN, 0, addr, index, array, len, CTRL_TIMEOUT);
     return ret;
 }
 
 int rtlsdr_write_array(rtlsdr_dev_t *dev, uint8_t block, uint16_t addr, uint8_t *array, uint8_t len)
 {
     uint16_t index = (block << 8) | 0x10;
-    unsigned char *data = calloc(len, sizeof(char));
-    data[0] = *array;
-    int ret = esp_libusb_control_transfer(dev->driver_obj, CTRL_OUT, 0, addr, index, data, len, CTRL_TIMEOUT);
-    // ESP_LOGI(TAG_ADSB, "rtlsdr_write_array here %d", ret);
-    free(data);
+    int ret = esp_libusb_control_transfer(dev->driver_obj, CTRL_OUT, 0, addr, index, array, len, CTRL_TIMEOUT);
     return ret;
 }
 
@@ -497,7 +490,7 @@ int rtlsdr_write_reg(rtlsdr_dev_t *dev, uint8_t block, uint16_t addr, uint16_t v
     data[1] = val & 0xff;
 
     int r = esp_libusb_control_transfer(dev->driver_obj, CTRL_OUT, 0, addr, index, data, len, CTRL_TIMEOUT);
-    ESP_LOGI(TAG_ADSB, "rtlsdr_write_reg here %d", r);
+
     if (r < 0)
         fprintf(stderr, "%s failed\n", __FUNCTION__);
 
@@ -636,7 +629,30 @@ void rtlsdr_init_baseband(rtlsdr_dev_t *dev)
     for (i = 0; i < 6; i++)
         rtlsdr_demod_write_reg(dev, 1, 0x16 + i, 0x00, 1);
 
-    rtlsdr_set_fir(dev);
+    //-----
+    rtlsdr_demod_write_reg(dev, 1, 0x1c, 0xca, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x1d, 0xdc, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x1e, 0xd7, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x1f, 0xd8, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x20, 0xe0, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x21, 0xf2, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x22, 0x0e, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x23, 0x35, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x24, 0x06, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x25, 0x50, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x26, 0x9c, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x27, 0x0d, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x28, 0x71, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x29, 0x11, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x2a, 0x14, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x2b, 0x71, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x2c, 0x74, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x2d, 0x19, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x2e, 0x41, 1);
+    rtlsdr_demod_write_reg(dev, 1, 0x2f, 0xa5, 1);
+    //----
+
+    // rtlsdr_set_fir(dev);
 
     /* enable SDR mode, disable DAGC (bit 5) */
     rtlsdr_demod_write_reg(dev, 0, 0x19, 0x05, 1);

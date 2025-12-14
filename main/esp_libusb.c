@@ -11,11 +11,22 @@ void init_adsb_dev()
 }
 void bulk_transfer_read_cb(usb_transfer_t *transfer)
 {
-    memcpy(adsbdev->response_buf, transfer->data_buffer, transfer->actual_num_bytes);
+    // int in_xfer = transfer->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_DIR_MASK;
+    // if ((transfer->status == 0) && in_xfer)
+    // {
+    //     for (int i = 0; i < 10; i++)
+    //         fprintf(stdout, "%02X", transfer->data_buffer[i]);
+    //     fprintf(stdout, "\n");
+    //     // for (int i = 0; i < transfer->actual_num_bytes; i++)
+    //     // {
+    //     //     adsbdev->response_buf[i] = transfer->data_buffer[i];
+    //     // }
+    // }
+
     adsbdev->is_done = true;
     adsbdev->is_success = transfer->status == 0;
-    adsbdev->bytes_transferred = transfer->num_bytes;
-    // printf("BULK: Transfer:Read type %d\n", transfer->num_bytes);
+    adsbdev->bytes_transferred = transfer->actual_num_bytes;
+    //  printf("BULK: Transfer:Read type %d\n", transfer->actual_num_bytes);
     // printf("BULK: Transfer:Read status %d, actual number of bytes transferred %d, databuffer size %d, %d\n", transfer->status, transfer->actual_num_bytes, transfer->data_buffer_size, adsbdev->response_buf[8]);
 }
 
@@ -34,11 +45,11 @@ void transfer_read_cb(usb_transfer_t *transfer)
 
 int esp_libusb_bulk_transfer(class_driver_t *driver_obj, unsigned char endpoint, unsigned char *data, int length, int *transferred, unsigned int timeout)
 {
-    // ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer info %d %d %d %d", endpoint, length, timeout, *transferred);
-    assert(driver_obj->dev_hdl != NULL);
-    size_t sizePacket = usb_round_up_to_mps(length, 64);
-    usb_transfer_t *transfer = NULL;
-    esp_err_t r = usb_host_transfer_alloc(sizePacket, 0, &transfer);
+    ESP_ERROR_CHECK(usb_host_transfer_free(adsbdev->transfer));
+    adsbdev->response_buf = NULL;
+    // free(adsbdev->response_buf);
+    size_t sizePacket = usb_round_up_to_mps(length, 512);
+    esp_err_t r = usb_host_transfer_alloc(sizePacket, 0, &adsbdev->transfer);
     if (r != ESP_OK)
     {
         ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer failed with %d", r);
@@ -46,17 +57,15 @@ int esp_libusb_bulk_transfer(class_driver_t *driver_obj, unsigned char endpoint,
     }
 
     // ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer usb_host_transfer_alloc %d %d", sizePacket, length);
-    transfer->num_bytes = sizePacket;
-    transfer->device_handle = driver_obj->dev_hdl;
-    transfer->bEndpointAddress = endpoint;
-    transfer->callback = bulk_transfer_read_cb;
-    transfer->context = (void *)&driver_obj;
-    transfer->timeout_ms = timeout;
+    adsbdev->transfer->num_bytes = sizePacket;
+    adsbdev->transfer->device_handle = driver_obj->dev_hdl;
+    adsbdev->transfer->timeout_ms = timeout;
+    adsbdev->transfer->bEndpointAddress = endpoint;
+    adsbdev->transfer->callback = bulk_transfer_read_cb;
+    adsbdev->transfer->context = (void *)&driver_obj;
     adsbdev->is_done = false;
-    free(adsbdev->response_buf);
-    adsbdev->response_buf = calloc(sizePacket, sizeof(uint8_t));
-
-    r = usb_host_transfer_submit(transfer);
+    // adsbdev->response_buf = calloc(sizePacket, sizeof(uint8_t));
+    r = usb_host_transfer_submit(adsbdev->transfer);
     if (r != ESP_OK)
     {
         ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer failed with %d", r);
@@ -71,9 +80,17 @@ int esp_libusb_bulk_transfer(class_driver_t *driver_obj, unsigned char endpoint,
         ESP_LOGI(TAG_ADSB, "esp_libusb_bulk_transfer failed");
         return -1;
     }
-    memcpy(data, adsbdev->response_buf, length);
     *transferred = adsbdev->bytes_transferred;
-    usb_host_transfer_free(transfer);
+    //  memcpy(data, adsbdev->transfer->data_buffer, *transferred);
+    // fprintf(stdout, "Transferred: %d bytes\n", *transferred);
+    for (int i = 0; i < *transferred; i++)
+    {
+        data[i] = adsbdev->transfer->data_buffer[i];
+    }
+
+    // for (int i = 0; i < 10; i++)
+    //     fprintf(stdout, "%02X %02X %02X ", data[i], adsbdev->response_buf[i], adsbdev->transfer->data_buffer[i]);
+    // fprintf(stdout, "\n");
     return 0;
 }
 
