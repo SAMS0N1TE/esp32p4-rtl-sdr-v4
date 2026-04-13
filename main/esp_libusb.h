@@ -1,4 +1,5 @@
 #include "usb/usb_host.h"
+#include "freertos/semphr.h"
 
 #ifndef portMAX_DELAY
 #define portMAX_DELAY (TickType_t)0xffffffffUL
@@ -27,10 +28,10 @@ typedef struct
 {
     bool is_adsb;
     uint8_t *response_buf;
-    bool is_done;
     bool is_success;
     int bytes_transferred;
     usb_transfer_t *transfer;
+    SemaphoreHandle_t done_sem;  // ADD THIS
 } class_adsb_dev;
 
 static const char *TAG_ADSB = "ADSB";

@@ -25,13 +25,14 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "rtlsdr_i2c.h"
 #include "tuner_r82xx.h"
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
-#define MHZ(x) ((x)*1000 * 1000)
-#define KHZ(x) ((x)*1000)
+#define MHZ(x) ((x) * 1000 * 1000)
+#define KHZ(x) ((x) * 1000)
 
 /*
  * Static constants
@@ -47,7 +48,6 @@ static const uint8_t r82xx_init_array[NUM_REGS] = {
     0x48, 0xcc, 0x60, 0x00, /* 18 to 1b */
     0x54, 0xae, 0x4a, 0xc0  /* 1c to 1f */
 };
-
 /* Tuner frequency ranges */
 static const struct r82xx_freq_range freq_ranges[] = {
     {
@@ -467,8 +467,16 @@ static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 
     /* Frequency in kHz */
     freq_khz = (freq + 500) / 1000;
-    pll_ref = priv->cfg->xtal;
-    pll_ref_khz = (priv->cfg->xtal + 500) / 1000;
+    
+    /* Enable /2 reference divider for 28.8 MHz Blog V4 sticks */
+    if (priv->cfg->xtal > 24000000) {
+        refdiv2 = 0x10;
+        pll_ref = priv->cfg->xtal / 2;
+    } else {
+        refdiv2 = 0x00;
+        pll_ref = priv->cfg->xtal;
+    }
+    pll_ref_khz = (pll_ref + 500) / 1000;
 
     rc = r82xx_write_reg_mask(priv, 0x10, refdiv2, 0x10);
     if (rc < 0)
@@ -568,7 +576,7 @@ static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 
     for (i = 0; i < 2; i++)
     {
-        //		usleep_range(sleep_time, sleep_time + 1000);
+        usleep(10000);
 
         /* Check if PLL has locked */
         rc = r82xx_read(priv, 0x00, data, 3);
@@ -588,6 +596,7 @@ static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 
     if (!(data[2] & 0x40))
     {
+        fprintf(stderr, "[R82XX] Freq: %lu\n", freq);
         fprintf(stderr, "[R82XX] PLL not locked!\n");
         priv->has_lock = 0;
         return 0;
@@ -742,7 +751,7 @@ static int r82xx_sysfreq_sel(struct r82xx_priv *priv, uint32_t freq,
         if (rc < 0)
             return rc;
 
-        //		msleep(250);
+        usleep(250000);
 
         /* write LNA TOP = 3 */
         rc = r82xx_write_reg_mask(priv, 0x1d, 0x18, 0x38);
@@ -851,7 +860,7 @@ static int r82xx_set_tv_standard(struct r82xx_priv *priv,
         rc = r82xx_write_reg_mask(priv, 0x1d, 0x00, 0x38);
         if (rc < 0)
             return rc;
-        //		usleep_range(1000, 2000);
+        usleep(2000);
     }
     priv->int_freq = if_khz * 1000;
 
@@ -887,7 +896,7 @@ static int r82xx_set_tv_standard(struct r82xx_priv *priv,
             if (rc < 0)
                 return rc;
 
-            //			usleep_range(1000, 2000);
+            usleep(2000);
 
             /* Stop Trigger */
             rc = r82xx_write_reg_mask(priv, 0x0b, 0x00, 0x10);
@@ -1279,7 +1288,7 @@ static int r82xx_xtal_check(struct r82xx_priv *priv)
         if (rc < 0)
             return rc;
 
-        //		usleep_range(5000, 6000);
+        usleep(6000);
 
         rc = r82xx_read(priv, 0x00, data, sizeof(data));
         if (rc < 0)
@@ -1310,18 +1319,22 @@ int r82xx_init(struct r82xx_priv *priv)
     priv->xtal_cap_sel = XTAL_HIGH_CAP_0P;
 
     /* Initialize registers */
+    priv->reg_cache = 0;
     rc = r82xx_write(priv, 0x05,
                      r82xx_init_array, sizeof(r82xx_init_array));
 
-    rc = r82xx_set_tv_standard(priv, 3, TUNER_DIGITAL_TV, 0);
-    if (rc < 0)
-        goto err;
+    rc |= r82xx_set_tv_standard(priv, 3, TUNER_DIGITAL_TV, 0);
 
-    rc = r82xx_sysfreq_sel(priv, 0, TUNER_DIGITAL_TV, SYS_DVBT);
+    priv->bw = R82XX_DEFAULT_IF_BW;
+    priv->int_freq = R82XX_DEFAULT_IF_FREQ;
+    /* r82xx_set_bw will always be called by rtlsdr_set_sample_rate,
+       so there's no need to call r82xx_set_if_filter here */
+
+    rc |= r82xx_sysfreq_sel(priv, 0, TUNER_DIGITAL_TV, SYS_DVBT);
 
     priv->init_done = 1;
+    priv->reg_cache = 1;
 
-err:
     if (rc < 0)
         fprintf(stderr, "%s: failed=%d\n", __FUNCTION__, rc);
     return rc;

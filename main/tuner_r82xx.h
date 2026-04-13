@@ -29,6 +29,9 @@
 #define R828D_I2C_ADDR 0x74
 #define R828D_XTAL_FREQ 16000000
 
+#define R82XX_DEFAULT_IF_FREQ 6000000
+#define R82XX_DEFAULT_IF_BW 2000000
+
 #define R82XX_CHECK_ADDR 0x00
 #define R82XX_CHECK_VAL 0x69
 
@@ -89,7 +92,9 @@ struct r82xx_priv
     uint8_t input;
     int has_lock;
     int init_done;
-
+    int reg_cache;
+    int reg_batch, reg_low, reg_high;
+    int disable_dither;
     /* Store current mode */
     uint32_t delsys;
     enum r82xx_tuner_type type;
