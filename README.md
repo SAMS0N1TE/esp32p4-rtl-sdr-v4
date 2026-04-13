@@ -31,7 +31,7 @@ a 32KB demodulation buffer.
 - **Live TUI** rendered via ANSI escape codes directly in the ESP-IDF serial monitor — no host software required
 - **Aircraft tracking table** showing ICAO address, callsign, altitude, ground speed, heading, EW/NS velocity components, vertical rate, and message count
 - **Event log** showing new contacts, lost contacts, identification, altitude, and velocity events
-- **Decode quality bars** showing decode rate and CRC error rate in real time
+- **Decode quality bars** [CURRENTLY BUGGED] — showing decode rate and CRC error rate in real time
 - **60-second contact timeout** — aircraft are removed from the table if no messages are received for 60 seconds
 
 ---
