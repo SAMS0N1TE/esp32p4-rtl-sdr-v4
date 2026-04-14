@@ -3,7 +3,7 @@
 An ESP32-P4 port of [kvhnuke/esp32-rtl-sdr](https://github.com/kvhnuke/esp32-rtl-sdr) with full ADS-B decoding and a live terminal UI. Receives 1090 MHz Mode-S/ADS-B transmissions from aircraft using an RTL-SDR dongle (tested with RTL-SDR V4 / R828D tuner) connected via USB to an Waveshare ESP32-P4 Nano.
 
 ![TUI screenshot showing live aircraft tracking](docs/tui.png)
-
+![TUI screenshot showing live aircraft tracking](docs/new_tui.png)
 ---
 
 ## What's new in this fork
@@ -44,6 +44,7 @@ Requires ESP-IDF v5.4 or later. I used 5.4.3.
 git clone --branch esp32p4 https://github.com/SAMSON1TE/esp32p4-rtl-sdr-v4
 cd esp32p4-rtl-sdr-v4
 idf.py set-target esp32p4
+idf.py add-dependency "espressif/es8311"
 idf.py build flash monitor
 ```
 
