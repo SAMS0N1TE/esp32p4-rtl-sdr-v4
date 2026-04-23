@@ -40,7 +40,7 @@ a 32KB demodulation buffer.
 Requires ESP-IDF v5.4 or later. I used 5.4.3. 
 
 ```bash
-git clone --branch esp32p4 https://github.com/SAMSON1TE/esp32p4-rtl-sdr-v4
+git clone --branch esp32p4 https://github.com/SAMS0N1TE/esp32p4-rtl-sdr-v4
 cd esp32p4-rtl-sdr-v4
 idf.py set-target esp32p4
 idf.py add-dependency "espressif/es8311"
